@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  name          String?
+  passwordHash  String?
+  role          String         @default("user") // "user" or "admin"
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  vehicles      SavedVehicle[]
+  reports       DiagnosticReport[]
+  comparisons   SavedComparison[]
+  sessions      Session[]
+  auditLogs     AuditLog[]
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Vehicle {
+  id             String         @id @default(uuid())
+  make           String
+  model          String
+  variant        String?
+  yearStart      Int
+  yearEnd        Int?
+  bodyType       String         // Sedan, SUV, Hatchback, Motorcycle, Scooter, etc.
+  fuelType       String         // Petrol, Diesel, EV, Hybrid, CNG
+  engineSizeCc   Int?
+  transmission   String?        // Manual, Automatic, CVT, DCT
+  horsepower     Int?
+  torqueNm       Int?
+  drivetrain     String?        // FWD, RWD, AWD
+  modelCode      String?        // e.g. W205, G20, Swift-ZXi
+  vinPrefix      String?        // e.g. MA3, 1HG
+  marketRegion   String         @default("India & Global")
+  imageUrl       String?
+  specSource     String         @default("Verified Catalog")
+  createdAt      DateTime       @default(now())
+
+  compatibilities PartCompatibility[]
+  identifications VehicleIdentification[]
+  savedByUsers    SavedVehicle[]
+  diagnosticReports DiagnosticReport[]
+}
+
+model VehicleIdentification {
+  id               String    @id @default(uuid())
+  method           String    // manual, vin, plate, image, video
+  queryInput       String    // The input VIN, plate, text query, or file reference
+  matchedVehicleId String?
+  confidenceScore  Float     // 0.0 to 1.0
+  evidenceDetails  String    // JSON string explaining visual clues, badge match, or decoder facts
+  isVerifiedFact   Boolean   @default(false)
+  alternativeCandidates String? // JSON string array of alternative matches
+  missingInfoQuestions  String? // JSON string array of follow-up questions
+  createdAt        DateTime  @default(now())
+
+  vehicle          Vehicle?  @relation(fields: [matchedVehicleId], references: [id])
+}
+
+model MediaUpload {
+  id             String    @id @default(uuid())
+  fileName       String
+  fileType       String    // image/jpeg, image/png, video/mp4, video/webm
+  fileSize       Int
+  fileUrl        String
+  purpose        String    // vehicle_id, warning_light, damaged_part, noise_video
+  extractedFrames String?  // JSON string array of extracted image paths
+  analysisResult String?   // JSON structured output from vision/audio
+  createdAt      DateTime  @default(now())
+}
+
+model DiagnosticSession {
+  id               String             @id @default(uuid())
+  vehicleInfo      String             // Snapshot of vehicle description or ID
+  symptoms         String
+  onsetConditions  String?            // When it started, driving conditions
+  warningLights    String?            // Warning indicators observed
+  obdCodes         String?            // Trouble codes e.g. P0300
+  createdAt        DateTime           @default(now())
+
+  reports          DiagnosticReport[]
+}
+
+model DiagnosticReport {
+  id               String             @id @default(uuid())
+  userId           String?
+  vehicleId        String?
+  sessionId        String?
+  summary          String
+  safetyLevel      String             // "informational", "caution", "urgent", "stop-driving"
+  safetyWarning    String?
+  mostLikelyCauses String             // JSON string array of ranked causes with evidence & probability
+  alternativeCauses String?           // JSON string array
+  preliminaryChecks String            // JSON string array of safe DIY checks
+  recommendedTests  String            // JSON string array of diagnostic steps
+  requiredTools     String            // JSON string array
+  repairDifficulty  String            // Easy, Moderate, Advanced, Specialist Only
+  costEstimateMin   Int               // In INR or base currency
+  costEstimateMax   Int
+  currency          String            @default("INR")
+  mechanicRecommended Boolean        @default(true)
+  recommendedParts  String?           // JSON string array of relevant replacement parts
+  referenceLinks    String?           // JSON string array of authoritative references
+  createdAt         DateTime          @default(now())
+
+  user             User?              @relation(fields: [userId], references: [id])
+  vehicle          Vehicle?           @relation(fields: [vehicleId], references: [id])
+  session          DiagnosticSession? @relation(fields: [sessionId], references: [id])
+}
+
+model SparePart {
+  id               String              @id @default(uuid())
+  partNumber       String              @unique
+  name             String
+  category         String              // Engine, Brakes, Suspension, Electrical, Filtration, etc.
+  description      String?
+  oemNumber        String?
+  oemBrand         String?
+  imageUrl         String?
+  createdAt        DateTime            @default(now())
+
+  compatibilities  PartCompatibility[]
+  retailerListings RetailerListing[]
+}
+
+model PartCompatibility {
+  id               String    @id @default(uuid())
+  partId           String
+  vehicleId        String
+  confidence       Float     @default(1.0)
+  evidenceSource   String    // OEM Catalog, Manufacturer cross-reference, Direct fit
+  notes            String?
+
+  part             SparePart @relation(fields: [partId], references: [id], onDelete: Cascade)
+  vehicle          Vehicle   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@unique([partId, vehicleId])
+}
+
+model RetailerListing {
+  id               String    @id @default(uuid())
+  partId           String
+  retailerName     String    // Boodmo, Amazon.in, eBay, CarParts, etc.
+  retailerUrl      String
+  productTitle     String
+  price            Float
+  shippingCost     Float     @default(0)
+  totalCost        Float
+  currency         String    @default("INR")
+  condition        String    // genuine, aftermarket, refurbished, used
+  inStock          Boolean   @default(true)
+  deliveryEstimate String?   // e.g. "3-5 business days"
+  warrantyMonths   Int?
+  sellerName       String?
+  sellerRating     Float?
+  lastChecked      DateTime  @default(now())
+  sourceAttribution String   // Direct API, Merchant Feed, Verified Partner
+
+  part             SparePart @relation(fields: [partId], references: [id], onDelete: Cascade)
+}
+
+model SavedVehicle {
+  id        String   @id @default(uuid())
+  userId    String
+  vehicleId String
+  nickname  String?
+  licenseNo String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+}
+
+model SavedComparison {
+  id           String   @id @default(uuid())
+  userId       String
+  partId       String
+  notes        String?
+  selectedDeal String?  // ID of preferred retailer listing
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ApiProviderConfig {
+  id           String   @id @default(uuid())
+  providerKey  String   @unique // "openai", "nvidia_nim", "gemini", "nhtsa_vin", "amazon_paapi", "ebay_browse", "boodmo"
+  displayName  String
+  category     String   // "ai", "vehicle_data", "parts_catalog", "marketplace"
+  isEnabled    Boolean  @default(false)
+  status       String   @default("missing_credentials") // "connected", "configured_untested", "missing_credentials", "temporarily_unavailable", "unsupported"
+  statusReason String?
+  lastTestedAt DateTime?
+  updatedAt    DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String   // identification_performed, report_generated, api_keys_updated, upload_deleted
+  details    String?  // JSON string
+  ipAddress  String?
+  timestamp  DateTime @default(now())
+
+  user       User?    @relation(fields: [userId], references: [id])
+}
